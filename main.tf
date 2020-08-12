@@ -2,39 +2,23 @@ provider "azurerm" {
     features {}
 }
 
+locals {
+  vm_user          = "adminuser"
+  pritunl_vpn_port = "11225"
+}
+
 resource "azurerm_resource_group" "main" {
   name     = var.name
   location = var.location
 }
 
 resource "azurerm_public_ip" "main" {
-  name                = "${var.name}-gateway-ip"
+  name                = "${var.name}-ip"
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
   allocation_method   = "Static"
+  domain_name_label   = "${var.name}-pritunl"
   sku                 = "Standard"
-}
-
-resource "azurerm_public_ip" "input" {
-  name                = "${var.name}-vpn-ip"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-  allocation_method   = "Static"
-  domain_name_label   = var.name
-  sku                 = "Standard"
-}
-
-resource "azurerm_nat_gateway" "main" {
-  name                    = "${var.name}-nat-gateway"
-  location                = azurerm_resource_group.main.location
-  resource_group_name     = azurerm_resource_group.main.name
-  sku_name                = "Standard"
-  idle_timeout_in_minutes = 10
-}
-
-resource "azurerm_nat_gateway_public_ip_association" "example" {
-  nat_gateway_id       = azurerm_nat_gateway.main.id
-  public_ip_address_id = azurerm_public_ip.main.id
 }
 
 resource "azurerm_virtual_network" "main" {
@@ -51,13 +35,13 @@ resource "azurerm_subnet" "main" {
   address_prefixes     = ["10.0.1.0/24"]
 }
 
-resource "azurerm_subnet_network_security_group_association" "example" {
+resource "azurerm_subnet_network_security_group_association" "nsg_assoc" {
   subnet_id                 = azurerm_subnet.main.id
   network_security_group_id = azurerm_network_security_group.main.id
 }
 
 resource "azurerm_network_security_group" "main" {
-  name                = "${var.name}-nsg-gateway"
+  name                = "${var.name}-nsg"
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
 }
@@ -111,18 +95,11 @@ resource "azurerm_network_security_rule" "vpn" {
   access                      = "Allow"
   protocol                    = "UDP"
   source_port_range           = "*"
-  destination_port_range      = "11225"
+  destination_port_range      = local.pritunl_vpn_port
   source_address_prefix       = "*"
   destination_address_prefix  = "*"
   resource_group_name         = azurerm_resource_group.main.name
   network_security_group_name = azurerm_network_security_group.main.name
-}
-
-
-
-resource "azurerm_subnet_nat_gateway_association" "main" {
-  subnet_id      = azurerm_subnet.main.id
-  nat_gateway_id = azurerm_nat_gateway.main.id
 }
 
 resource "azurerm_network_interface" "main" {
@@ -135,7 +112,7 @@ resource "azurerm_network_interface" "main" {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.main.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id          = azurerm_public_ip.input.id
+    public_ip_address_id          = azurerm_public_ip.main.id
   }
 }
 
@@ -145,13 +122,14 @@ resource "azurerm_linux_virtual_machine" "main" {
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   size                = var.vmsize
-  admin_username      = "adminuser"
+  admin_username      = local.vm_user
+
   network_interface_ids = [
     azurerm_network_interface.main.id,
   ]
 
   admin_ssh_key {
-    username   = "adminuser"
+    username   = local.vm_user
     public_key = file("~/.ssh/id_rsa.pub")
   }
 
@@ -160,7 +138,6 @@ resource "azurerm_linux_virtual_machine" "main" {
     storage_account_type = "Standard_LRS"
   }
 
-
   source_image_reference {
     publisher = "OpenLogic"
     offer     = "CentOs"
@@ -168,16 +145,30 @@ resource "azurerm_linux_virtual_machine" "main" {
     version   = "latest"
   }
 
-#   provisioner "file" {
-#     source      = "script.sh"
-#     destination = "/tmp/script.sh"
-#   }
+  provisioner "file" {
+    source      = "scripts/install.sh"
+    destination = "/tmp/install.sh"
 
-#   provisioner "remote-exec" {
-#     inline = [
-#       "chmod +x /tmp/script.sh",
-#       "/tmp/script.sh",
-#     ]
-#   }
+    connection {
+      type        = "ssh"
+      user        = local.vm_user
+      private_key = file("~/.ssh/id_rsa")
+      host        = azurerm_public_ip.main.ip_address
+    }
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "chmod +x /tmp/install.sh",
+      "/tmp/install.sh",
+    ]
+    
+    connection {
+      type        = "ssh"
+      user        = local.vm_user
+      private_key = file("~/.ssh/id_rsa")
+      host        = azurerm_public_ip.main.ip_address
+    }
+  }
 }
 
