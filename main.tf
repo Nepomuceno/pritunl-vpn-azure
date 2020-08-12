@@ -3,7 +3,8 @@ provider "azurerm" {
 }
 
 locals {
-  vm_user = "adminuser"
+  vm_user          = "adminuser"
+  pritunl_vpn_port = "11225"
 }
 
 resource "azurerm_resource_group" "main" {
@@ -94,7 +95,7 @@ resource "azurerm_network_security_rule" "vpn" {
   access                      = "Allow"
   protocol                    = "UDP"
   source_port_range           = "*"
-  destination_port_range      = "11225"
+  destination_port_range      = local.pritunl_vpn_port
   source_address_prefix       = "*"
   destination_address_prefix  = "*"
   resource_group_name         = azurerm_resource_group.main.name
@@ -145,8 +146,8 @@ resource "azurerm_linux_virtual_machine" "main" {
   }
 
   provisioner "file" {
-    source      = "script.sh"
-    destination = "/tmp/script.sh"
+    source      = "scripts/install.sh"
+    destination = "/tmp/install.sh"
 
     connection {
       type        = "ssh"
@@ -158,8 +159,8 @@ resource "azurerm_linux_virtual_machine" "main" {
 
   provisioner "remote-exec" {
     inline = [
-      "chmod +x /tmp/script.sh",
-      "/tmp/script.sh",
+      "chmod +x /tmp/install.sh",
+      "/tmp/install.sh",
     ]
     
     connection {
